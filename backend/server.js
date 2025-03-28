@@ -12,10 +12,8 @@ const db = new sqlite3.Database("./parkingDB.db", (err) => {
 });
 
 db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
+    db.run(`CREATE TABLE IF NOT EXISTS users (        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
         phone TEXT UNIQUE NOT NULL,
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
@@ -25,6 +23,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS parking_slots (
         slot_id INTEGER PRIMARY KEY AUTOINCREMENT,
         slot_number TEXT UNIQUE NOT NULL,
+        floor INTEGER NOT NULL,
         status TEXT CHECK(status IN ('available', 'reserved')) NOT NULL DEFAULT 'available',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
@@ -33,6 +32,8 @@ db.serialize(() => {
         reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         slot_id INTEGER NOT NULL,
+        slot_number TEXT UNIQUE NOT NULL,
+        floor INTEGER NOT NULL,
         start_time TEXT NOT NULL,
         end_time TEXT NOT NULL,
         booking_type TEXT CHECK(booking_type IN ('hourly', 'daily', 'monthly')) NOT NULL,
@@ -46,16 +47,15 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS payments (
         payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
         reservation_id INTEGER NOT NULL,
+        penalty_id INTEGER NOT NULL,
         amount REAL NOT NULL,
-        payment_method TEXT CHECK(payment_method IN ('bank_transfer', 'qr_code')) NOT NULL,
         payment_status TEXT CHECK(payment_status IN ('pending', 'verified', 'failed')) NOT NULL DEFAULT 'pending',
-        proof_of_payment TEXT,
+        bank_reference_number TEXT UNIQUE NOT NULL,
         FOREIGN KEY(reservation_id) REFERENCES reservations(reservation_id)
-    )`);
+    )`); //เก็บภาพเป็น TEXT วิธีการยุ่งยาก
 
     db.run(`CREATE TABLE IF NOT EXISTS penalties (
         penalty_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
         reservation_id INTEGER NOT NULL,
         actual_exit_time TEXT NOT NULL,
         amount REAL NOT NULL,
@@ -66,41 +66,32 @@ db.serialize(() => {
 
     db.run(`CREATE TABLE IF NOT EXISTS notifications (
         notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
+        reservation_id INTEGER NOT NULL,
         message TEXT NOT NULL,
         is_read BOOLEAN NOT NULL DEFAULT FALSE,
-        FOREIGN KEY(user_id) REFERENCES users(user_id)
+        FOREIGN KEY(reservation_id) REFERENCES reservations(reservation_id)
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS barrier_control (
         control_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        slot_id INTEGER NOT NULL,
+        reservation_id INTEGER NOT NULL,
         action TEXT CHECK(action IN ('open', 'close')) NOT NULL,
         action_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(user_id),
-        FOREIGN KEY(slot_id) REFERENCES parking_slots(slot_id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS extensions (
-        extension_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        reservation_id INTEGER NOT NULL,
-        new_end_time TEXT NOT NULL,
-        additional_fee REAL NOT NULL,
         FOREIGN KEY(reservation_id) REFERENCES reservations(reservation_id)
     )`);
+
 });
 
 //users
 // API ลงทะเบียนผู้ใช้ใหม่
 app.post("/register", async (req, res) => {
-    const { name, last_name, phone, email, password, car_plate } = req.body;
+    const { username, phone, email, password, car_plate } = req.body;
     const encryptedPassword = await bcrypt.hash(password, 10);
-    console.log("POST: ", name, last_name, phone, email, password, car_plate);
+    console.log("POST: ", username, phone, email, password, car_plate);
 
     db.run(
-        `INSERT INTO users (name, last_name, phone, email, password, car_plate) VALUES (?,?,?,?,?,?)`,
-        [name, last_name, phone, email, encryptedPassword, car_plate],
+        `INSERT INTO users (username, phone, email, password, car_plate) VALUES (?,?,?,?,?)`,
+        [username, phone, email, encryptedPassword, car_plate],
         function (err) {
             if (err) return res.status(400).send({ message: "User already exists" });
             res.send({ message: "User registered" });
@@ -128,7 +119,7 @@ app.post("/login", (req, res) => {
 
 // API ดึงข้อมูลผู้ใช้ทั้งหมด
 app.get("/users", (req, res) => {
-    db.all(`SELECT * FROM users`, (err, rows) => {
+    db.all(`SELECT user_id, username, phone, email, car_plate FROM users`, (err, rows) => {
         if (err) {
             return res.status(500).send({ message: "Error fetching users" });
         }
@@ -138,30 +129,40 @@ app.get("/users", (req, res) => {
 
 // API ดึงข้อมูลผู้ใช้ตาม user_id
 app.get("/users/:id", (req, res) => {
-    const userId = req.params.id;
+    const userId = parseInt(req.params.id, 10);
 
-    db.get(`SELECT * FROM users WHERE user_id = ?`, [userId], (err, row) => {
-        if (err) {
-            return res.status(500).send({ message: "Error fetching user" });
+    // ตรวจสอบว่า userId เป็นตัวเลขที่ถูกต้อง
+    if (isNaN(userId)) {
+        return res.status(400).send({ message: "Invalid user ID" });
+    }
+
+    db.get(
+        `SELECT user_id, username, phone, email, car_plate FROM users WHERE user_id = ?`,
+        [userId],
+        (err, row) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching user" });
+            }
+            if (!row) {
+                return res.status(404).send({ message: "User not found" });
+            }
+            res.send({ user: row });
         }
-        if (!row) {
-            return res.status(404).send({ message: "User not found" });
-        }
-        res.send({ user: row });
-    });
+    );
 });
-//user
+
 // API แก้ไขข้อมูลผู้ใช้
 app.put("/users/:id", async (req, res) => {
     const userId = req.params.id;
-    const { name, last_name, phone, email, password, car_plate } = req.body;
+    const { username, phone, email, password, car_plate } = req.body;
 
     // เข้ารหัสรหัสผ่านใหม่ (ถ้ามีการเปลี่ยนแปลง)
     let encryptedPassword = password ? await bcrypt.hash(password, 10) : null;
 
     db.run(
-        `UPDATE users SET name = ?, last_name = ?, phone = ?, email = ?, password = ?, car_plate = ? WHERE user_id = ?`,
-        [name, last_name, phone, email, encryptedPassword || password, car_plate, userId],
+        `UPDATE users SET username = ?, phone = ?, email = ?, password = ?, car_plate = ? WHERE user_id = ?`,
+        [username, phone, email, encryptedPassword || password, car_plate, userId],
         function (err) {
             if (err) {
                 return res.status(500).send({ message: "Error updating user" });
@@ -186,36 +187,65 @@ app.delete("/users/:id", (req, res) => {
 //parking_slots
 // API ดึงข้อมูลที่จอดรถทั้งหมด
 app.get("/parking_slots", (req, res) => {
-    db.all(`SELECT * FROM parking_slots`, (err, rows) => {
-        if (err) {
-            return res.status(500).send({ message: "Error fetching parking slots" });
+    db.all(
+        `SELECT slot_id, slot_number, floor, status, created_at FROM parking_slots`,
+        (err, rows) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching parking slots" });
+            }
+            res.send({ parking_slots: rows });
         }
-        res.send({ parking_slots: rows });
-    });
+    );
 });
+
 
 // API ดึงข้อมูลที่จอดรถตาม slot_id
 app.get("/parking_slots/:id", (req, res) => {
-    const slotId = req.params.id;
+    const slotId = parseInt(req.params.id, 10);
 
-    db.get(`SELECT * FROM parking_slots WHERE slot_id = ?`, [slotId], (err, row) => {
-        if (err) {
-            return res.status(500).send({ message: "Error fetching parking slot" });
+    // ตรวจสอบว่า slotId เป็นตัวเลขที่ถูกต้อง
+    if (isNaN(slotId)) {
+        return res.status(400).send({ message: "Invalid slot ID" });
+    }
+
+    db.get(
+        `SELECT slot_id, slot_number, floor, status, created_at FROM parking_slots WHERE slot_id = ?`,
+        [slotId],
+        (err, row) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching parking slot" });
+            }
+            if (!row) {
+                return res.status(404).send({ message: "Parking slot not found" });
+            }
+            res.send({ parking_slot: row });
         }
-        if (!row) {
-            return res.status(404).send({ message: "Parking slot not found" });
-        }
-        res.send({ parking_slot: row });
-    });
+    );
 });
 
-app.put("/parking-slots/:slot_id", (req, res) => {
+//อัพเดตสถานะที่จอดรถ
+app.put("/parking_slots/:slot_id", (req, res) => {
+    const slotId = parseInt(req.params.slot_id, 10);
     const { status } = req.body;
+
+    // ตรวจสอบค่า status ต้องเป็น 'available' หรือ 'reserved' เท่านั้น
+    if (!["available", "reserved"].includes(status)) {
+        return res.status(400).send({ message: "Invalid status value" });
+    }
+
     db.run(
         `UPDATE parking_slots SET status = ? WHERE slot_id = ?`,
-        [status, req.params.slot_id],
+        [status, slotId],
         function (err) {
-            if (err) return res.status(400).send({ message: "Error updating parking slot" });
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(400).send({ message: "Error updating parking slot" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Parking slot not found" });
+            }
             res.send({ message: "Parking slot updated successfully" });
         }
     );
@@ -226,58 +256,116 @@ app.put("/parking-slots/:slot_id", (req, res) => {
 app.post("/reservations", (req, res) => {
     const { user_id, slot_id, start_time, end_time, booking_type, total_price, status } = req.body;
     const created_at = new Date().toISOString();
-    
-    // เช็คว่ามีข้อมูลครบหรือไม่
+
+    // ตรวจสอบค่าที่จำเป็นต้องมี
     if (!user_id || !slot_id || !start_time || !end_time || !booking_type || !total_price || !status) {
         return res.status(400).send({ message: "Missing required fields" });
     }
 
-    // คำสั่ง SQL สำหรับการสร้างการจอง
-    db.run(
-        `INSERT INTO reservations (user_id, slot_id, start_time, end_time, booking_type, total_price, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [user_id, slot_id, start_time, end_time, booking_type, total_price, status, created_at],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error creating reservation" });
-            res.status(201).send({ message: "Reservation created successfully", reservation_id: this.lastID });
+    // ตรวจสอบค่า booking_type และ status
+    if (!["hourly", "daily", "monthly"].includes(booking_type)) {
+        return res.status(400).send({ message: "Invalid booking type" });
+    }
+    if (!["pending", "confirmed", "completed"].includes(status)) {
+        return res.status(400).send({ message: "Invalid status value" });
+    }
+
+    // ตรวจสอบว่า slot_id มีอยู่จริง พร้อมดึง slot_number และ floor
+    db.get(`SELECT slot_number, floor FROM parking_slots WHERE slot_id = ?`, [slot_id], (err, slot) => {
+        if (err) {
+            console.error("Database Error:", err);
+            return res.status(500).send({ message: "Error checking parking slot" });
         }
-    );
+        if (!slot) {
+            return res.status(404).send({ message: "Parking slot not found" });
+        }
+
+        // ทำการจองที่จอดรถ
+        db.run(
+            `INSERT INTO reservations (user_id, slot_id, slot_number, floor, start_time, end_time, booking_type, total_price, status, created_at) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [user_id, slot_id, slot.slot_number, slot.floor, start_time, end_time, booking_type, total_price, status, created_at],
+            function (err) {
+                if (err) return res.status(500).send({ message: "Error creating reservation" });
+                res.status(201).send({ message: "Reservation created successfully", reservation_id: this.lastID });
+            }
+        );
+    });
 });
 
 // GET /reservations: ดึงข้อมูลการจองทั้งหมด
 app.get("/reservations", (req, res) => {
-    db.all("SELECT * FROM reservations", (err, rows) => {
-        if (err) return res.status(500).send({ message: "Error fetching reservations" });
-        res.send({ reservations: rows });
-    });
+    db.all(
+        `SELECT reservation_id, user_id, slot_id, slot_number, floor, start_time, end_time, booking_type, total_price, status, created_at 
+         FROM reservations`,
+        (err, rows) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching reservations" });
+            }
+            res.send({ reservations: rows });
+        }
+    );
 });
 
 // GET /reservations/:reservation_id: ดึงข้อมูลการจองตาม ID
 app.get("/reservations/:reservation_id", (req, res) => {
-    const { reservation_id } = req.params;
+    const reservation_id = parseInt(req.params.reservation_id, 10);
 
-    db.get(`SELECT * FROM reservations WHERE reservation_id = ?`, [reservation_id], (err, row) => {
-        if (err) return res.status(500).send({ message: "Error fetching reservation" });
-        if (!row) return res.status(404).send({ message: "Reservation not found" });
-        res.send({ reservation: row });
-    });
+    if (isNaN(reservation_id)) {
+        return res.status(400).send({ message: "Invalid reservation ID" });
+    }
+
+    db.get(
+        `SELECT reservation_id, user_id, slot_id, slot_number, floor, start_time, end_time, booking_type, total_price, status, created_at 
+         FROM reservations WHERE reservation_id = ?`,
+        [reservation_id],
+        (err, row) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching reservation" });
+            }
+            if (!row) {
+                return res.status(404).send({ message: "Reservation not found" });
+            }
+            res.send({ reservation: row });
+        }
+    );
 });
 
 // PUT /reservations/:reservation_id: แก้ไขการจอง
 app.put("/reservations/:reservation_id", (req, res) => {
-    const { reservation_id } = req.params;
+    const reservation_id = parseInt(req.params.reservation_id, 10);
     const { start_time, end_time, booking_type, total_price, status } = req.body;
 
-    // เช็คว่ามีข้อมูลที่ต้องการแก้ไขหรือไม่
+    if (isNaN(reservation_id)) {
+        return res.status(400).send({ message: "Invalid reservation ID" });
+    }
+
+    // ตรวจสอบค่าที่จำเป็นต้องมี
     if (!start_time || !end_time || !booking_type || !total_price || !status) {
         return res.status(400).send({ message: "Missing required fields" });
+    }
+
+    // ตรวจสอบค่า booking_type และ status
+    if (!["hourly", "daily", "monthly"].includes(booking_type)) {
+        return res.status(400).send({ message: "Invalid booking type" });
+    }
+    if (!["pending", "confirmed", "completed"].includes(status)) {
+        return res.status(400).send({ message: "Invalid status value" });
     }
 
     db.run(
         `UPDATE reservations SET start_time = ?, end_time = ?, booking_type = ?, total_price = ?, status = ? WHERE reservation_id = ?`,
         [start_time, end_time, booking_type, total_price, status, reservation_id],
         function (err) {
-            if (err) return res.status(500).send({ message: "Error updating reservation" });
-            if (this.changes === 0) return res.status(404).send({ message: "Reservation not found" });
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error updating reservation" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Reservation not found" });
+            }
             res.send({ message: "Reservation updated successfully" });
         }
     );
@@ -285,14 +373,23 @@ app.put("/reservations/:reservation_id", (req, res) => {
 
 // DELETE /reservations/:reservation_id: ลบการจอง
 app.delete("/reservations/:reservation_id", (req, res) => {
-    const { reservation_id } = req.params;
+    const reservation_id = parseInt(req.params.reservation_id, 10);
+
+    if (isNaN(reservation_id)) {
+        return res.status(400).send({ message: "Invalid reservation ID" });
+    }
 
     db.run(
         `DELETE FROM reservations WHERE reservation_id = ?`,
         [reservation_id],
         function (err) {
-            if (err) return res.status(500).send({ message: "Error deleting reservation" });
-            if (this.changes === 0) return res.status(404).send({ message: "Reservation not found" });
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error deleting reservation" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Reservation not found" });
+            }
             res.send({ message: "Reservation deleted successfully" });
         }
     );
@@ -301,50 +398,99 @@ app.delete("/reservations/:reservation_id", (req, res) => {
 //Payments
 // POST /payments: การชำระเงิน
 app.post("/payments", (req, res) => {
-    const { reservation_id, amount, payment_method, payment_status, proof_of_payment } = req.body;
+    const { reservation_id, penalty_id, amount, payment_status, bank_reference_number } = req.body;
     const created_at = new Date().toISOString();
 
-    if (!reservation_id || !amount || !payment_method || !payment_status) {
+    // ตรวจสอบค่าที่จำเป็นต้องมี
+    if (!reservation_id || !penalty_id || !amount || !payment_status || !bank_reference_number) {
         return res.status(400).send({ message: "Missing required fields" });
     }
 
-    db.run(
-        `INSERT INTO payments (reservation_id, amount, payment_method, payment_status, proof_of_payment, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [reservation_id, amount, payment_method, payment_status, proof_of_payment, created_at],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error processing payment" });
-            res.status(201).send({ message: "Payment processed successfully", payment_id: this.lastID });
+    // ตรวจสอบค่า payment_status
+    if (!["pending", "verified", "failed"].includes(payment_status)) {
+        return res.status(400).send({ message: "Invalid payment status" });
+    }
+
+    // ตรวจสอบว่า reservation_id มีอยู่จริง
+    db.get(`SELECT reservation_id FROM reservations WHERE reservation_id = ?`, [reservation_id], (err, reservation) => {
+        if (err) {
+            console.error("Database Error:", err);
+            return res.status(500).send({ message: "Error checking reservation" });
         }
-    );
+        if (!reservation) {
+            return res.status(404).send({ message: "Reservation not found" });
+        }
+
+        // ทำการบันทึกการชำระเงิน
+        db.run(
+            `INSERT INTO payments (reservation_id, penalty_id, amount, payment_status, bank_reference_number) 
+            VALUES (?, ?, ?, ?, ?)`,
+            [reservation_id, penalty_id, amount, payment_status, bank_reference_number],
+            function (err) {
+                if (err) {
+                    console.error("Database Error:", err);
+                    return res.status(500).send({ message: "Error processing payment" });
+                }
+                res.status(201).send({ message: "Payment processed successfully", payment_id: this.lastID });
+            }
+        );
+    });
 });
 
 // GET /payments/:payment_id: ดึงข้อมูลการชำระเงินตาม ID
 app.get("/payments/:payment_id", (req, res) => {
-    const { payment_id } = req.params;
+    const payment_id = parseInt(req.params.payment_id, 10);
 
-    db.get(`SELECT * FROM payments WHERE payment_id = ?`, [payment_id], (err, row) => {
-        if (err) return res.status(500).send({ message: "Error fetching payment" });
-        if (!row) return res.status(404).send({ message: "Payment not found" });
-        res.send({ payment: row });
-    });
+    if (isNaN(payment_id)) {
+        return res.status(400).send({ message: "Invalid payment ID" });
+    }
+
+    db.get(
+        `SELECT payment_id, reservation_id, penalty_id, amount, payment_status, bank_reference_number 
+         FROM payments WHERE payment_id = ?`,
+        [payment_id],
+        (err, row) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching payment" });
+            }
+            if (!row) {
+                return res.status(404).send({ message: "Payment not found" });
+            }
+            res.send({ payment: row });
+        }
+    );
 });
 
 // PUT /payments/:payment_id: อัพเดตสถานะการชำระเงิน
 app.put("/payments/:payment_id", (req, res) => {
-    const { payment_id } = req.params;
+    const payment_id = parseInt(req.params.payment_id, 10);
     const { payment_status } = req.body;
+
+    if (isNaN(payment_id)) {
+        return res.status(400).send({ message: "Invalid payment ID" });
+    }
 
     if (!payment_status) {
         return res.status(400).send({ message: "Missing payment status" });
+    }
+
+    // ตรวจสอบค่า payment_status
+    if (!["pending", "verified", "failed"].includes(payment_status)) {
+        return res.status(400).send({ message: "Invalid payment status" });
     }
 
     db.run(
         `UPDATE payments SET payment_status = ? WHERE payment_id = ?`,
         [payment_status, payment_id],
         function (err) {
-            if (err) return res.status(500).send({ message: "Error updating payment" });
-            if (this.changes === 0) return res.status(404).send({ message: "Payment not found" });
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error updating payment" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Payment not found" });
+            }
             res.send({ message: "Payment status updated successfully" });
         }
     );
@@ -353,47 +499,114 @@ app.put("/payments/:payment_id", (req, res) => {
 //Penalties
 // POST /penalties: การบันทึกค่าปรับ
 app.post("/penalties", (req, res) => {
-    const { user_id, reservation_id, actual_exit_time, amount, status } = req.body;
+    const { reservation_id, actual_exit_time, amount, status } = req.body;
     const created_at = new Date().toISOString();
 
-    if (!user_id || !reservation_id || !amount || !status) {
+    // ตรวจสอบค่าที่จำเป็นต้องมี
+    if (!reservation_id || !actual_exit_time || !amount || !status) {
         return res.status(400).send({ message: "Missing required fields" });
     }
 
-    db.run(
-        `INSERT INTO penalties (user_id, reservation_id, actual_exit_time, amount, status, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [user_id, reservation_id, actual_exit_time, amount, status, created_at],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error recording penalty" });
-            res.status(201).send({ message: "Penalty recorded successfully", penalty_id: this.lastID });
+    // ตรวจสอบค่า status
+    if (!["unpaid", "paid"].includes(status)) {
+        return res.status(400).send({ message: "Invalid penalty status" });
+    }
+
+    // ตรวจสอบว่า reservation_id มีอยู่จริง
+    db.get(`SELECT reservation_id FROM reservations WHERE reservation_id = ?`, [reservation_id], (err, reservation) => {
+        if (err) {
+            console.error("Database Error:", err);
+            return res.status(500).send({ message: "Error checking reservation" });
         }
-    );
+        if (!reservation) {
+            return res.status(404).send({ message: "Reservation not found" });
+        }
+
+        // ทำการบันทึกค่าปรับ
+        db.run(
+            `INSERT INTO penalties (reservation_id, actual_exit_time, amount, status) 
+            VALUES (?, ?, ?, ?)`,
+            [reservation_id, actual_exit_time, amount, status],
+            function (err) {
+                if (err) {
+                    console.error("Database Error:", err);
+                    return res.status(500).send({ message: "Error recording penalty" });
+                }
+                res.status(201).send({ message: "Penalty recorded successfully", penalty_id: this.lastID });
+            }
+        );
+    });
 });
 
 // GET /penalties: ดึงข้อมูลค่าปรับทั้งหมด
 app.get("/penalties", (req, res) => {
-    db.all("SELECT * FROM penalties", (err, rows) => {
-        if (err) return res.status(500).send({ message: "Error fetching penalties" });
-        res.send({ penalties: rows });
-    });
+    db.all(
+        `SELECT penalty_id, reservation_id, actual_exit_time, amount, status 
+         FROM penalties`,
+        (err, rows) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching penalties" });
+            }
+            res.send({ penalties: rows });
+        }
+    );
+});
+
+// GET /penalties/:penalty_id: ดึงข้อมูลค่าปรับตาม ID
+app.get("/penalties/:penalty_id", (req, res) => {
+    const penalty_id = parseInt(req.params.penalty_id, 10);
+
+    if (isNaN(penalty_id)) {
+        return res.status(400).send({ message: "Invalid penalty ID" });
+    }
+
+    db.get(
+        `SELECT penalty_id, reservation_id, actual_exit_time, amount, status 
+         FROM penalties WHERE penalty_id = ?`,
+        [penalty_id],
+        (err, row) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching penalty" });
+            }
+            if (!row) {
+                return res.status(404).send({ message: "Penalty not found" });
+            }
+            res.send({ penalty: row });
+        }
+    );
 });
 
 // PUT /penalties/:penalty_id: อัพเดตสถานะค่าปรับ
 app.put("/penalties/:penalty_id", (req, res) => {
-    const { penalty_id } = req.params;
+    const penalty_id = parseInt(req.params.penalty_id, 10);
     const { status } = req.body;
+
+    if (isNaN(penalty_id)) {
+        return res.status(400).send({ message: "Invalid penalty ID" });
+    }
 
     if (!status) {
         return res.status(400).send({ message: "Missing penalty status" });
+    }
+
+    // ตรวจสอบค่า status
+    if (!["unpaid", "paid"].includes(status)) {
+        return res.status(400).send({ message: "Invalid penalty status" });
     }
 
     db.run(
         `UPDATE penalties SET status = ? WHERE penalty_id = ?`,
         [status, penalty_id],
         function (err) {
-            if (err) return res.status(500).send({ message: "Error updating penalty" });
-            if (this.changes === 0) return res.status(404).send({ message: "Penalty not found" });
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error updating penalty" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Penalty not found" });
+            }
             res.send({ message: "Penalty status updated successfully" });
         }
     );
@@ -402,92 +615,147 @@ app.put("/penalties/:penalty_id", (req, res) => {
 //Notifications
 // POST /notifications: ส่งการแจ้งเตือน
 app.post("/notifications", (req, res) => {
-    const { user_id, message, is_read } = req.body;
+    const { reservation_id, message, is_read } = req.body;
     const created_at = new Date().toISOString();
 
-    if (!user_id || !message || typeof is_read === 'undefined') {
+    // ตั้งค่า is_read เป็น false ถ้าไม่ได้ส่งมา
+    const readStatus = is_read !== undefined ? is_read : false;
+
+    // ตรวจสอบค่าที่จำเป็นต้องมี
+    if (!reservation_id || !message) {
         return res.status(400).send({ message: "Missing required fields" });
     }
 
-    db.run(
-        `INSERT INTO notifications (user_id, message, is_read, created_at) 
-        VALUES (?, ?, ?, ?)`,
-        [user_id, message, is_read, created_at],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error sending notification" });
-            res.status(201).send({ message: "Notification sent successfully", notification_id: this.lastID });
+    // ตรวจสอบว่า reservation_id มีอยู่จริง
+    db.get(`SELECT reservation_id FROM reservations WHERE reservation_id = ?`, [reservation_id], (err, reservation) => {
+        if (err) {
+            console.error("Database Error:", err);
+            return res.status(500).send({ message: "Error checking reservation" });
+        }
+        if (!reservation) {
+            return res.status(404).send({ message: "Reservation not found" });
+        }
+
+        // บันทึกการแจ้งเตือน
+        db.run(
+            `INSERT INTO notifications (reservation_id, message, is_read) 
+            VALUES (?, ?, ?)`,
+            [reservation_id, message, readStatus],
+            function (err) {
+                if (err) {
+                    console.error("Database Error:", err);
+                    return res.status(500).send({ message: "Error sending notification" });
+                }
+                res.status(201).send({ message: "Notification sent successfully", notification_id: this.lastID });
+            }
+        );
+    });
+});
+
+// GET /notifications/:reservation_id: ดึงการแจ้งเตือนสำหรับการจอง
+app.get("/notifications/:reservation_id", (req, res) => {
+    const reservation_id = parseInt(req.params.reservation_id, 10);
+
+    if (isNaN(reservation_id)) {
+        return res.status(400).send({ message: "Invalid reservation ID" });
+    }
+
+    db.all(
+        `SELECT notification_id, reservation_id, message, is_read 
+         FROM notifications WHERE reservation_id = ?`,
+        [reservation_id],
+        (err, rows) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching notifications" });
+            }
+            res.send({ notifications: rows });
         }
     );
 });
 
-// GET /notifications/:user_id: ดึงการแจ้งเตือนสำหรับผู้ใช้
-app.get("/notifications/:user_id", (req, res) => {
-    const { user_id } = req.params;
+// PUT /notifications/:notification_id: อัพเดตสถานะการแจ้งเตือนเป็นอ่านแล้ว
+app.put("/notifications/:notification_id", (req, res) => {
+    const notification_id = parseInt(req.params.notification_id, 10);
+    const { is_read } = req.body;
 
-    db.all(`SELECT * FROM notifications WHERE user_id = ?`, [user_id], (err, rows) => {
-        if (err) return res.status(500).send({ message: "Error fetching notifications" });
-        res.send({ notifications: rows });
-    });
+    if (isNaN(notification_id)) {
+        return res.status(400).send({ message: "Invalid notification ID" });
+    }
+
+    if (typeof is_read !== "boolean") {
+        return res.status(400).send({ message: "Invalid is_read value" });
+    }
+
+    db.run(
+        `UPDATE notifications SET is_read = ? WHERE notification_id = ?`,
+        [is_read, notification_id],
+        function (err) {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error updating notification" });
+            }
+            if (this.changes === 0) {
+                return res.status(404).send({ message: "Notification not found" });
+            }
+            res.send({ message: "Notification updated successfully" });
+        }
+    );
 });
 
 //Barrier Control
 // POST /barrier-control: ควบคุมการพับที่กั้น
 app.post("/barrier-control", (req, res) => {
-    const { user_id, slot_id, action } = req.body;
-    const action_time = new Date().toISOString();
+    const { reservation_id, action } = req.body;
 
-    if (!user_id || !slot_id || !action) {
+    // ตรวจสอบค่าที่จำเป็นต้องมี
+    if (!reservation_id || !action) {
         return res.status(400).send({ message: "Missing required fields" });
     }
 
-    db.run(
-        `INSERT INTO barrier_control (user_id, slot_id, action, action_time) 
-        VALUES (?, ?, ?, ?)`,
-        [user_id, slot_id, action, action_time],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error controlling barrier" });
-            res.status(201).send({ message: "Barrier control action recorded", control_id: this.lastID });
+    // ตรวจสอบว่า action มีค่าเป็น 'open' หรือ 'close' เท่านั้น
+    if (!["open", "close"].includes(action)) {
+        return res.status(400).send({ message: "Invalid action. Must be 'open' or 'close'" });
+    }
+
+    // ตรวจสอบว่า reservation_id มีอยู่จริง
+    db.get(`SELECT reservation_id FROM reservations WHERE reservation_id = ?`, [reservation_id], (err, reservation) => {
+        if (err) {
+            console.error("Database Error:", err);
+            return res.status(500).send({ message: "Error checking reservation" });
         }
-    );
+        if (!reservation) {
+            return res.status(404).send({ message: "Reservation not found" });
+        }
+
+        // บันทึกข้อมูลการควบคุมที่กั้น
+        db.run(
+            `INSERT INTO barrier_control (reservation_id, action) VALUES (?, ?)`,
+            [reservation_id, action],
+            function (err) {
+                if (err) {
+                    console.error("Database Error:", err);
+                    return res.status(500).send({ message: "Error controlling barrier" });
+                }
+                res.status(201).send({ message: "Barrier control action recorded", control_id: this.lastID });
+            }
+        );
+    });
 });
 
 // GET /barrier-control: ดึงข้อมูลการควบคุมที่กั้นทั้งหมด
 app.get("/barrier-control", (req, res) => {
-    db.all("SELECT * FROM barrier_control", (err, rows) => {
-        if (err) return res.status(500).send({ message: "Error fetching barrier control actions" });
-        res.send({ barrier_control: rows });
-    });
-});
-
-//Extensions
-// POST /extensions: การขอต่อเวลา
-app.post("/extensions", (req, res) => {
-    const { reservation_id, new_end_time, additional_fee } = req.body;
-
-    if (!reservation_id || !new_end_time || !additional_fee) {
-        return res.status(400).send({ message: "Missing required fields" });
-    }
-
-    db.run(
-        `INSERT INTO extensions (reservation_id, new_end_time, additional_fee) 
-        VALUES (?, ?, ?)`,
-        [reservation_id, new_end_time, additional_fee],
-        function (err) {
-            if (err) return res.status(500).send({ message: "Error processing extension" });
-            res.status(201).send({ message: "Extension request created", extension_id: this.lastID });
+    db.all(
+        `SELECT control_id, reservation_id, action, action_time 
+         FROM barrier_control`,
+        (err, rows) => {
+            if (err) {
+                console.error("Database Error:", err);
+                return res.status(500).send({ message: "Error fetching barrier control actions" });
+            }
+            res.send({ barrier_control: rows });
         }
     );
-});
-
-// GET /extensions/:reservation_id: ดึงข้อมูลการต่อเวลาจาก ID การจอง
-app.get("/extensions/:reservation_id", (req, res) => {
-    const { reservation_id } = req.params;
-
-    db.get(`SELECT * FROM extensions WHERE reservation_id = ?`, [reservation_id], (err, row) => {
-        if (err) return res.status(500).send({ message: "Error fetching extension" });
-        if (!row) return res.status(404).send({ message: "Extension not found" });
-        res.send({ extension: row });
-    });
 });
 
 app.listen(5000,() => console.log("Server running on port 5000"));

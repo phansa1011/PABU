@@ -6,14 +6,16 @@ import { MaterialIcons } from '@expo/vector-icons';
 
 const RegisterScreen = ({ navigation }) => {
     const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
+    const [phone, setPhone] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [licensePlate, setLicensePlate] = useState("");
+    const [carPlate, setCarPlate] = useState("");
 
     const handleRegister = async () => {
         try {
             // Basic validation
-            if (!username || !password || !confirmPassword || !licensePlate) {
+            if (!username || !password || !confirmPassword || !carPlate) {
                 Alert.alert("Error", "Please fill in all fields");
                 return;
             }
@@ -23,7 +25,7 @@ const RegisterScreen = ({ navigation }) => {
                 return;
             }
 
-            // await registerUser(username, password, licensePlate);
+            // await registerUser(username, password, carPlate);
             Alert.alert("Registration Successful");
             navigation.navigate("Login");
         } catch (error) {
@@ -46,16 +48,28 @@ const RegisterScreen = ({ navigation }) => {
                     placeHolder="Username"
                     value={username}
                     onChangeText={setUsername}
-                    icon="person"
                     containerStyle={styles.input}
                 />
                 
+                <SearchBox
+                    placeHolder="Email"
+                    value={email}
+                    onChangeText={setEmail}
+                    containerStyle={styles.input}
+                />
+                
+                <SearchBox
+                    placeHolder="Phone Number"
+                    value={phone}
+                    onChangeText={setPhone}
+                    containerStyle={styles.input}
+                />
+
                 <SearchBox
                     placeHolder="Password"
                     value={password}
                     onChangeText={setPassword}
                     secure={true}
-                    icon="lock"
                     containerStyle={styles.input}
                 />
                 
@@ -64,15 +78,13 @@ const RegisterScreen = ({ navigation }) => {
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
                     secure={true}
-                    icon="lock-outline"
                     containerStyle={styles.input}
                 />
                 
                 <SearchBox
-                    placeHolder="License Plate"
-                    value={licensePlate}
-                    onChangeText={setLicensePlate}
-                    icon="directions-car"
+                    placeHolder="Car Plate"
+                    value={carPlate}
+                    onChangeText={setCarPlate}
                     containerStyle={styles.input}
                     autoCapitalize="characters"
                 />
