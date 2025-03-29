@@ -5,29 +5,17 @@ import SearchBox from "../component/SearchBox";
 import { MaterialIcons } from '@expo/vector-icons';
 
 const LoginScreen = ({ navigation }) => {
-    const [input, setInput] = useState("");
+    const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
 
     const handleLogin = async () => {
         try {    
-            // ตรวจสอบว่าข้อมูลที่กรอกเป็น username, email หรือ phone
-            let identifier = input;
-
-            if (input.includes('@')) {
-                identifier = 'email';
-            } else if (/\d{10}/.test(input)) {
-                identifier = 'phone';
-            } else {
-                identifier = 'username';
-            }
-
-            // คุณสามารถทำการเชื่อมต่อกับ backend หรือ API ที่ต้องการได้
-            // const token = await loginUser(identifier, password);
-
+            // const token = await loginUser(username, password);
+            
             navigation.navigate("Parking", {  
-                identifier: input  // ส่งข้อมูลไปยังหน้าถัดไป
+                username: username
             });
-
+            
             Alert.alert("Login Successful", `Welcome back!`);
         } catch (error) {
             Alert.alert("Login Failed", error.message);
@@ -45,9 +33,9 @@ const LoginScreen = ({ navigation }) => {
             </View>
 
             <SearchBox 
-                placeHolder="Username/Email/Phone Number" 
-                value={input} 
-                onChangeText={setInput}
+                placeHolder="Username/Phone number/Email" 
+                value={username} 
+                onChangeText={setUsername}
                 containerStyle={styles.input}
             />
             

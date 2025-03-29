@@ -1,3 +1,24 @@
+/*
+3. ตาราง reservations (การจองที่จอดรถ) ยังไม่ได้ตั้งราคาtotal_price – ราคาการจอง
+reservation_id (PK) – รหัสการจอง
+user_id (FK) – ผู้จอง 
+slot_id (FK) – รหัสที่จอดรถ
+slot_number – หมายเลขที่จอด
+floor – ชั้น /ต้องรับพารามิเตอร์มาจากหน้า CarparkingScreen
+start_time – วัน-เวลาที่เริ่มจอด
+end_time – วัน-เวลาที่ออกจากที่จอด
+booking_type – ประเภทการจอง (hourly, daily, monthly)
+total_price – ราคาการจอง ยังไม่ได้ตั้งราคา 
+status – สถานะ (pending, confirmed, completed)
+created_at – วัน-เวลาที่จอง
+
+7. ตาราง barrier_control (ระบบควบคุมที่กั้นรถ)
+control_id (PK) – รหัสการควบคุม
+reservation_id (FK) – รหัสการจอง
+action – ของที่กั้นรถ (open, close)
+action_time – เวลาที่กั้นรถ
+*/
+
 import React, { useState } from 'react';
 import { 
   View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, 

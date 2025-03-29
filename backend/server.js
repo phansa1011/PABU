@@ -12,7 +12,8 @@ const db = new sqlite3.Database("./parkingDB.db", (err) => {
 });
 
 db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    db.run(`CREATE TABLE IF NOT EXISTS users (    
+        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         phone TEXT UNIQUE NOT NULL,
         email TEXT UNIQUE NOT NULL,
@@ -757,5 +758,12 @@ app.get("/barrier-control", (req, res) => {
         }
     );
 });
+
+//เอาไว้เช็ค root
+app._router.stack.forEach((middleware) => {
+    if (middleware.route) {
+      console.log(`${middleware.route.stack[0].method.toUpperCase()} ${middleware.route.path}`);
+    }
+  });
 
 app.listen(5000,() => console.log("Server running on port 5000"));

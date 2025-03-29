@@ -1,3 +1,10 @@
+/*2. ตาราง parking_slots (พื้นที่จอดรถ) แก้ front end
+slot_id (PK) – รหัสที่จอดรถ 
+slot_number – หมายเลขที่จอด
+floor – ชั้น
+status – สถานะ (available, reserved)
+created_at – วันที่เพิ่มที่จอด
+มีการรับพารามิเตอร์จากหน้าMyparkingScreenเพื่อบอกวันที่เพิ่มที่จอด*/
 import React, { useState } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, Alert, StatusBar, 

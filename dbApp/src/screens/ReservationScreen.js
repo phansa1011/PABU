@@ -1,3 +1,17 @@
+/*3. ตาราง reservations (การจองที่จอดรถ) ยังไม่ได้ตั้งราคาtotal_price – ราคาการจอง
+reservation_id (PK) – รหัสการจอง
+user_id (FK) – ผู้จอง
+slot_id (FK) – รหัสที่จอดรถ
+slot_number – หมายเลขที่จอด
+floor – ชั้น
+start_time – วัน-เวลาที่เริ่มจอด
+end_time – วัน-เวลาที่ออกจากที่จอด
+booking_type – ประเภทการจอง (hourly, daily, monthly)
+total_price – ราคาการจอง ยังไม่ได้ตั้งราคา 
+status – สถานะ (pending, confirmed, completed)
+created_at – วัน-เวลาที่จอง
+เราตั้งราคาไว้แล้ว
+รายชั่วโมง 50 บาท รายวัน 150 บาท รายเดือน 1000 บาท ดูจากที่บรรทัด 40 ชื่อ calculateFee*/
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 
